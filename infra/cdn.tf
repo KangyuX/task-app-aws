@@ -73,10 +73,11 @@ resource "aws_cloudfront_distribution" "cdn" {
   }
 }
 
-resource "terraform_data" "invalidate" {
-  triggers_replace = [for o in aws_s3_object.site : o.etag]
-  provisioner "local-exec" {
-    command = "aws cloudfront create-invalidation --distribution-id ${aws_cloudfront_distribution.cdn.id} --paths /* --no-cli-pager"
+# Cache invalidation after a frontend change is done by the GitHub Actions workflow.
+removed {
+  from = terraform_data.invalidate
+  lifecycle {
+    destroy = false
   }
 }
 

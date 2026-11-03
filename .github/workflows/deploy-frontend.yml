@@ -1,0 +1,91 @@
+name: Deploy frontend
+
+# Every push to main that changes frontend/ uploads the files to the S3 site
+# bucket and clears the CloudFront cache. Can also be run by hand from the
+# Actions tab ("Run workflow").
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_dispatch:
+
+# OIDC: GitHub hands AWS a short-lived token; no AWS keys are stored in GitHub.
+permissions:
+  id-token: write
+  contents: read
+
+# Never run two deploys at once; a newer push waits for the current one.
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Check configuration
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          SITE_BUCKET: ${{ vars.SITE_BUCKET }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          missing=0
+          for v in AWS_ROLE_ARN SITE_BUCKET CLOUDFRONT_DISTRIBUTION_ID; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Repository variable $v is not set (Settings → Secrets and variables → Actions → Variables)"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Check JavaScript syntax
+        run: node --check frontend/app.js
+
+      - name: Sign in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload files to S3
+        env:
+          BUCKET: ${{ vars.SITE_BUCKET }}
+        run: |
+          set -euo pipefail
+          upload() { # <pattern> <content-type>
+            aws s3 cp frontend "s3://$BUCKET" --recursive --only-show-errors \
+              --exclude "*" --include "$1" \
+              --content-type "$2" --cache-control "no-cache"
+          }
+          upload "*.html" "text/html; charset=utf-8"
+          upload "*.css"  "text/css; charset=utf-8"
+          upload "*.js"   "application/javascript; charset=utf-8"
+          upload "*.svg"  "image/svg+xml"
+          # Anything else (images, fonts…) with a guessed type, and delete
+          # files from the bucket that were removed from frontend/.
+          aws s3 sync frontend "s3://$BUCKET" --delete --only-show-errors --cache-control "no-cache"
+          echo "Bucket now contains:"
+          aws s3 ls "s3://$BUCKET" --recursive --human-readable
+
+      - name: Clear CloudFront cache
+        env:
+          DIST: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          set -euo pipefail
+          id=$(aws cloudfront create-invalidation --distribution-id "$DIST" --paths "/*" \
+                 --query Invalidation.Id --output text)
+          echo "Invalidation $id started; waiting for it to finish…"
+          aws cloudfront wait invalidation-completed --distribution-id "$DIST" --id "$id"
+          domain=$(aws cloudfront get-distribution --distribution-id "$DIST" \
+                     --query Distribution.DomainName --output text)
+          echo "### Frontend deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit \`${GITHUB_SHA::7}\` is live${domain:+ at https://$domain}" >> "$GITHUB_STEP_SUMMARY"

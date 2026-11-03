@@ -30,26 +30,14 @@ resource "aws_s3_bucket_policy" "site" {
   })
 }
 
-locals {
-  site_dir = "${path.module}/../frontend"
-  mime = {
-    html = "text/html; charset=utf-8"
-    css  = "text/css; charset=utf-8"
-    js   = "application/javascript; charset=utf-8"
-    svg  = "image/svg+xml"
-    png  = "image/png"
-    ico  = "image/x-icon"
+# The frontend files themselves are deployed by GitHub Actions
+# (.github/workflows/deploy-frontend.yml), not by Terraform. Terraform used to
+# upload them; this block hands them over without deleting the live copies.
+removed {
+  from = aws_s3_object.site
+  lifecycle {
+    destroy = false
   }
-}
-
-resource "aws_s3_object" "site" {
-  for_each      = fileset(local.site_dir, "**")
-  bucket        = aws_s3_bucket.site.id
-  key           = each.value
-  source        = "${local.site_dir}/${each.value}"
-  etag          = filemd5("${local.site_dir}/${each.value}")
-  content_type  = lookup(local.mime, reverse(split(".", each.value))[0], "application/octet-stream")
-  cache_control = "no-cache"
 }
 
 resource "aws_s3_bucket" "files" {

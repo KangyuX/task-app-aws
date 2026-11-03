@@ -38,7 +38,26 @@ terraform init
 terraform apply
 ```
 
-Changing anything in `backend/` or `frontend/` and re-running `terraform apply` ships it (new EB app version / new S3 objects + CloudFront invalidation). `terraform output site_url` prints the link.
+Changing anything in `backend/` and re-running `terraform apply` ships a new Elastic Beanstalk version. `terraform output site_url` prints the link.
+
+## Frontend CI/CD (GitHub Actions)
+
+`.github/workflows/deploy-frontend.yml` runs on every push to `main` that touches `frontend/` (or by hand from the Actions tab). It:
+
+1. checks the repository variables are set and `app.js` parses,
+2. signs in to AWS with OIDC: a short-lived token, no AWS keys stored in GitHub,
+3. uploads `frontend/` to the site bucket with correct content types and deletes files that were removed,
+4. clears the CloudFront cache and waits until the new version is live.
+
+Terraform (`infra/github.tf`) creates the GitHub OIDC provider and an IAM role that only workflows on `main` of `KangyuX/task-app-aws` can assume. The role can write only the site bucket and invalidate only this distribution. Terraform no longer uploads the frontend files; the workflow owns them.
+
+One-time setup after `terraform apply`: copy the three values from
+
+```bash
+terraform output github_actions_variables
+```
+
+into GitHub → **Settings → Secrets and variables → Actions → Variables** as `AWS_ROLE_ARN`, `SITE_BUCKET` and `CLOUDFRONT_DISTRIBUTION_ID`.
 
 ## Run the API locally
 
