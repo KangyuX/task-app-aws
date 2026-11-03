@@ -85,7 +85,8 @@ jobs:
                  --query Invalidation.Id --output text)
           echo "Invalidation $id started; waiting for it to finish…"
           aws cloudfront wait invalidation-completed --distribution-id "$DIST" --id "$id"
-          domain=$(aws cloudfront get-distribution --distribution-id "$DIST" \
-                     --query Distribution.DomainName --output text)
+          # Only used for the run summary, so a failure here must not fail the deploy.
+          domain=$(aws cloudfront get-distribution --id "$DIST" \
+                     --query Distribution.DomainName --output text) || domain=""
           echo "### Frontend deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
           echo "Commit \`${GITHUB_SHA::7}\` is live${domain:+ at https://$domain}" >> "$GITHUB_STEP_SUMMARY"
