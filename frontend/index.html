@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pitch In — post and pick up tasks</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/browse"><span class="logo" aria-hidden="true">✋</span> Pitch In</a>
+    <nav id="nav" hidden>
+      <a href="#/browse" data-route="browse">Browse</a>
+      <a href="#/post" data-route="post">Post a task</a>
+      <a href="#/mine" data-route="mine">My tasks</a>
+    </nav>
+    <div id="who" class="who" hidden>
+      <span id="who-name"></span>
+      <button id="signout" class="link">Sign out</button>
+    </div>
+  </header>
+
+  <main id="view" aria-live="polite"></main>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <!-- ===== templates ===== -->
+  <template id="tpl-auth">
+    <section class="auth">
+      <div class="auth-intro">
+        <h1>Need a hand? Have a hand?</h1>
+        <p>Post the errands, chores and odd jobs you need done. Pick up tasks other people have posted. That's it.</p>
+      </div>
+      <form class="card auth-card" id="auth-form" novalidate>
+        <div class="tabs" role="tablist">
+          <button type="button" role="tab" data-mode="login" aria-selected="true">Sign in</button>
+          <button type="button" role="tab" data-mode="register" aria-selected="false">Create account</button>
+        </div>
+        <label class="only-register" hidden>Your name<input name="name" autocomplete="name" maxlength="80"></label>
+        <label>Email<input name="email" type="email" autocomplete="email" required></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" minlength="8" required></label>
+        <p class="error" id="auth-error" hidden></p>
+        <button class="primary" type="submit" id="auth-submit">Sign in</button>
+      </form>
+    </section>
+  </template>
+
+  <template id="tpl-browse">
+    <section>
+      <div class="page-head">
+        <h1>Open tasks</h1>
+        <form id="search" class="search" role="search">
+          <input name="q" type="search" placeholder="Search title, description, location" aria-label="Search tasks">
+        </form>
+      </div>
+      <div id="list" class="grid"></div>
+    </section>
+  </template>
+
+  <template id="tpl-post">
+    <section class="narrow">
+      <h1>Post a task</h1>
+      <form class="card form" id="post-form" novalidate>
+        <label>Title<input name="title" maxlength="120" required placeholder="e.g. Help moving a couch on Saturday"></label>
+        <label>Details<textarea name="description" rows="5" maxlength="4000" placeholder="What needs doing, how long it should take, anything to bring…"></textarea></label>
+        <div class="row">
+          <label>Reward ($)<input name="reward" type="number" min="0" max="100000" step="0.01" value="20"></label>
+          <label>Due date<input name="due_date" type="date"></label>
+        </div>
+        <label>Location<input name="location" maxlength="120" placeholder="Neighborhood, address or “Remote”"></label>
+        <label>Attachments <span class="hint">(optional · up to 10 MB each)</span><input name="files" type="file" multiple></label>
+        <p class="error" id="post-error" hidden></p>
+        <button class="primary" type="submit">Post task</button>
+      </form>
+    </section>
+  </template>
+
+  <template id="tpl-mine">
+    <section>
+      <h1>My tasks</h1>
+      <div class="tabs tabs-wide" role="tablist">
+        <button type="button" role="tab" data-tab="posted" aria-selected="true">Posted by me</button>
+        <button type="button" role="tab" data-tab="accepted" aria-selected="false">Accepted by me</button>
+      </div>
+      <div id="list" class="grid"></div>
+    </section>
+  </template>
+
+  <template id="tpl-detail">
+    <section class="narrow">
+      <a href="#/browse" class="back" id="back">← Back</a>
+      <article class="card detail" id="detail"></article>
+    </section>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
