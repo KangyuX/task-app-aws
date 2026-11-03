@@ -49,7 +49,7 @@ Changing anything in `backend/` and re-running `terraform apply` ships a new Ela
 3. uploads `frontend/` to the site bucket with correct content types and deletes files that were removed,
 4. clears the CloudFront cache and waits until the new version is live.
 
-Terraform (`infra/github.tf`) creates the GitHub OIDC provider and an IAM role that only workflows on `main` of `KangyuX/task-app-aws` can assume. The role can write only the site bucket and invalidate only this distribution. Terraform no longer uploads the frontend files; the workflow owns them.
+Terraform (`infra/github.tf`) creates the GitHub OIDC provider and an IAM role that only workflows on `main` of `KangyuX/task-app-aws` can assume (matched by GitHub's immutable owner and repo IDs, see `var.github_repo`). The role can write only the site bucket and invalidate only this distribution. Terraform no longer uploads the frontend files; the workflow owns them.
 
 One-time setup after `terraform apply`: copy the three values from
 

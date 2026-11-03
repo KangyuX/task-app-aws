@@ -4,9 +4,15 @@
 # and can only touch the site bucket and this distribution's invalidations.
 # ---------------------------------------------------------------------------
 variable "github_repo" {
-  description = "GitHub repository (owner/name) allowed to deploy the frontend."
+  description = <<-EOT
+    GitHub repository allowed to deploy the frontend, exactly as it appears in
+    the OIDC token's "sub" claim. GitHub includes immutable owner and repo IDs
+    (owner@ownerId/repo@repoId), so a deleted-and-recreated repo with the same
+    name can't use this role. To find the value for another repo, look up the
+    failed AssumeRoleWithWebIdentity event in CloudTrail (userName field).
+  EOT
   type        = string
-  default     = "KangyuX/task-app-aws"
+  default     = "KangyuX@155896620/task-app-aws@1444903346"
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
