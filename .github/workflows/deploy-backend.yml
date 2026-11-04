@@ -1,0 +1,176 @@
+name: Deploy backend
+
+# Every push to main that changes backend/ zips the API, uploads it to the S3
+# bucket Elastic Beanstalk owns (elasticbeanstalk-<region>-<account>),
+# registers it as a new application version and switches the environment to
+# it. Can also be run by hand from the Actions tab ("Run workflow").
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+
+# OIDC: GitHub hands AWS a short-lived token; no AWS keys are stored in GitHub.
+permissions:
+  id-token: write
+  contents: read
+
+# Never run two deploys at once; a newer push waits for the current one.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Check configuration
+        env:
+          AWS_BACKEND_ROLE_ARN: ${{ vars.AWS_BACKEND_ROLE_ARN }}
+          EB_BUCKET: ${{ vars.EB_BUCKET }}
+          EB_APPLICATION: ${{ vars.EB_APPLICATION }}
+          EB_ENVIRONMENT: ${{ vars.EB_ENVIRONMENT }}
+        run: |
+          missing=0
+          for v in AWS_BACKEND_ROLE_ARN EB_BUCKET EB_APPLICATION EB_ENVIRONMENT; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Repository variable $v is not set (Settings → Secrets and variables → Actions → Variables)"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies and check syntax
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          # Fails if package.json and package-lock.json disagree.
+          npm ci --omit=dev --no-audit --no-fund
+          for f in $(find src -name '*.js'); do node --check "$f"; done
+          # Catch missing imports / startup crashes without a database.
+          node --input-type=module -e "await import('./src/db.js'); await import('./src/auth.js'); await import('./src/files.js')"
+
+      - name: Build bundle
+        id: bundle
+        run: |
+          set -euo pipefail
+          label="backend-${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          zip_path="$RUNNER_TEMP/$label.zip"
+          # Beanstalk runs npm install from package-lock.json on the instance,
+          # so node_modules stays out of the bundle.
+          (cd backend && zip -qr "$zip_path" . -x "node_modules/*" ".env" "test/*")
+          unzip -l "$zip_path"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          echo "zip=$zip_path" >> "$GITHUB_OUTPUT"
+
+      - name: Sign in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_BACKEND_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload bundle to the Elastic Beanstalk bucket
+        env:
+          BUCKET: ${{ vars.EB_BUCKET }}
+          APP: ${{ vars.EB_APPLICATION }}
+          LABEL: ${{ steps.bundle.outputs.label }}
+          ZIP: ${{ steps.bundle.outputs.zip }}
+        run: |
+          set -euo pipefail
+          aws s3 cp "$ZIP" "s3://$BUCKET/$APP/$LABEL.zip" --only-show-errors
+          echo "Uploaded s3://$BUCKET/$APP/$LABEL.zip"
+
+      - name: Register application version
+        env:
+          BUCKET: ${{ vars.EB_BUCKET }}
+          APP: ${{ vars.EB_APPLICATION }}
+          LABEL: ${{ steps.bundle.outputs.label }}
+        run: |
+          set -euo pipefail
+          desc=$(git log -1 --format=%s | cut -c1-180)
+          aws elasticbeanstalk create-application-version \
+            --application-name "$APP" --version-label "$LABEL" \
+            --description "$desc" \
+            --source-bundle "S3Bucket=$BUCKET,S3Key=$APP/$LABEL.zip" \
+            --process --output text --query ApplicationVersion.Status
+          # --process makes Beanstalk validate the zip; wait for the verdict.
+          for i in $(seq 1 30); do
+            status=$(aws elasticbeanstalk describe-application-versions \
+                       --application-name "$APP" --version-labels "$LABEL" \
+                       --query 'ApplicationVersions[0].Status' --output text)
+            echo "Version status: $status"
+            case "$status" in
+              PROCESSED) exit 0 ;;
+              FAILED) echo "::error::Elastic Beanstalk rejected the bundle"; exit 1 ;;
+            esac
+            sleep 5
+          done
+          echo "::error::Timed out waiting for the version to be processed"; exit 1
+
+      - name: Deploy to Elastic Beanstalk
+        env:
+          ENV_NAME: ${{ vars.EB_ENVIRONMENT }}
+          LABEL: ${{ steps.bundle.outputs.label }}
+        run: |
+          set -euo pipefail
+          started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          aws elasticbeanstalk update-environment --environment-name "$ENV_NAME" \
+            --version-label "$LABEL" --output text --query Status
+          # Wait for the environment to finish updating (up to 20 minutes).
+          for i in $(seq 1 80); do
+            read -r status health version < <(aws elasticbeanstalk describe-environments \
+              --environment-names "$ENV_NAME" \
+              --query 'Environments[0].[Status,Health,VersionLabel]' --output text)
+            echo "$(date -u +%H:%M:%S) status=$status health=$health version=$version"
+            [ "$status" = "Ready" ] && break
+            sleep 15
+          done
+          echo "Recent environment events:"
+          aws elasticbeanstalk describe-events --environment-name "$ENV_NAME" \
+            --start-time "$started" --query 'Events[].[EventDate,Severity,Message]' --output text | sort
+          if [ "$status" != "Ready" ]; then
+            echo "::error::Environment did not finish updating in time"; exit 1
+          fi
+          if [ "$version" != "$LABEL" ]; then
+            echo "::error::Environment is running $version, not $LABEL (deploy failed or was rolled back)"; exit 1
+          fi
+          # Health can lag a few seconds behind the deploy; give it a minute.
+          for i in $(seq 1 6); do
+            [ "$health" = "Green" ] && break
+            sleep 10
+            health=$(aws elasticbeanstalk describe-environments --environment-names "$ENV_NAME" \
+                       --query 'Environments[0].Health' --output text)
+            echo "health=$health"
+          done
+          if [ "$health" != "Green" ]; then
+            echo "::error::New version deployed but environment health is $health"; exit 1
+          fi
+
+      - name: Smoke test through CloudFront
+        if: ${{ vars.SITE_URL != '' }}
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
+          LABEL: ${{ steps.bundle.outputs.label }}
+        run: |
+          set -euo pipefail
+          # /api/health also checks the database connection.
+          curl -fsS --retry 5 --retry-delay 5 --retry-all-errors "$SITE_URL/api/health"
+          echo
+          echo "### Backend deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "Version \`$LABEL\` is live at $SITE_URL" >> "$GITHUB_STEP_SUMMARY"

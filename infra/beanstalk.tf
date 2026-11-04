@@ -82,30 +82,20 @@ resource "aws_iam_role_policy_attachment" "service_managed" {
   policy_arn = "arn:aws:iam::aws:policy/AWSElasticBeanstalkManagedUpdatesCustomerRolePolicy"
 }
 
-# App bundle: zip ../backend (without node_modules) and upload to the files bucket.
-data "archive_file" "backend" {
-  type        = "zip"
-  source_dir  = "${path.module}/../backend"
-  output_path = "${path.module}/.build/backend.zip"
-  excludes    = ["node_modules", ".env", "test"]
-}
-
-resource "aws_s3_object" "bundle" {
-  bucket = aws_s3_bucket.files.id
-  key    = "deploy/backend-${data.archive_file.backend.output_md5}.zip"
-  source = data.archive_file.backend.output_path
-  etag   = data.archive_file.backend.output_md5
-}
-
+# The backend code is NOT deployed by Terraform. GitHub Actions
+# (.github/workflows/deploy-backend.yml) zips backend/, uploads it to the
+# bucket Elastic Beanstalk owns (elasticbeanstalk-<region>-<account>) and
+# deploys it as a new application version. A brand-new environment runs the
+# Beanstalk sample app until that workflow runs once.
 resource "aws_elastic_beanstalk_application" "app" {
   name = local.name
-}
 
-resource "aws_elastic_beanstalk_application_version" "v" {
-  name        = "backend-${data.archive_file.backend.output_md5}"
-  application = aws_elastic_beanstalk_application.app.name
-  bucket      = aws_s3_bucket.files.id
-  key         = aws_s3_object.bundle.key
+  # Keep the 30 newest versions; older ones and their zips are deleted.
+  appversion_lifecycle {
+    service_role          = aws_iam_role.service.arn
+    max_count             = 30
+    delete_source_from_s3 = true
+  }
 }
 
 data "aws_elastic_beanstalk_solution_stack" "node" {
@@ -144,8 +134,12 @@ resource "aws_elastic_beanstalk_environment" "api" {
   name                   = "${local.name}-api"
   application            = aws_elastic_beanstalk_application.app.name
   solution_stack_name    = data.aws_elastic_beanstalk_solution_stack.node.name
-  version_label          = aws_elastic_beanstalk_application_version.v.name
   wait_for_ready_timeout = "30m"
+
+  # The deploy workflow owns which version is running; don't roll it back.
+  lifecycle {
+    ignore_changes = [version_label]
+  }
 
   dynamic "setting" {
     for_each = local.eb_settings
