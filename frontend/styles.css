@@ -154,3 +154,11 @@ button:disabled { opacity: .55; cursor: progress; }
   .topbar { gap: .6rem 1rem; }
   nav { order: 3; flex-basis: 100%; overflow-x: auto; }
 }
+
+/* CI/CD pipeline test: every visible word is purple. Delete this block to revert. */
+:root { --purple: #7e22ce; --purple-soft: #f3e8ff; }
+@media (prefers-color-scheme: dark) {
+  :root { --purple: #c084fc; --purple-soft: #2e1a47; }
+}
+body, body *, input::placeholder, textarea::placeholder { color: var(--purple) !important; }
+.primary, .toast, .logo { background: var(--purple-soft) !important; border-color: var(--purple) !important; }
