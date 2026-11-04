@@ -132,6 +132,14 @@ resource "aws_iam_role_policy" "github_backend" {
         Resource = "${local.eb_bucket_arn}/*"
       },
       {
+        # After a deploy Beanstalk deletes its working copies of the old and
+        # new bundle here; without this the deploy is marked as aborted.
+        Sid      = "BeanstalkRuntimeCleanup"
+        Effect   = "Allow"
+        Action   = "s3:DeleteObject"
+        Resource = "${local.eb_bucket_arn}/resources/environments/${aws_elastic_beanstalk_environment.api.id}/*"
+      },
+      {
         Sid    = "CreateVersionAndDeploy"
         Effect = "Allow"
         Action = ["elasticbeanstalk:CreateApplicationVersion", "elasticbeanstalk:UpdateEnvironment"]
