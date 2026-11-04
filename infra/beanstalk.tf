@@ -34,6 +34,14 @@ resource "aws_iam_role_policy_attachment" "instance_web" {
   policy_arn = "arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier"
 }
 
+# Lets admins run one-off commands on the instance (aws ssm send-command /
+# Session Manager), e.g. database maintenance, since RDS is private and the
+# instance has no SSH key.
+resource "aws_iam_role_policy_attachment" "instance_ssm" {
+  role       = aws_iam_role.instance.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_iam_role_policy" "instance_files" {
   name = "attachments"
   role = aws_iam_role.instance.id
